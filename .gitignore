@@ -1,0 +1,7 @@
+# Compiled files
+bin/
+*.o
+
+# Temporary files
+*.dat
+*.tmp
