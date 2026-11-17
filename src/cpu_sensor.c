@@ -1,46 +1,49 @@
 #include <stdio.h>
 #include <unistd.h>
+#include <sysmon.h>
 
-int main()
+void *cpu_sensor_thread(void *arg)
 {
-    FILE *file;
-    FILE *output;
-    float load1, load5, load15;
+    SystemState *state = (SystemState *)arg;
 
-    while (1) {
+    FILE *file;
+    double load1, load5, load15;
+
+    while (running) {
 
         // Read CPU load
         file = fopen("/proc/loadavg", "r");
 
         if (file == NULL) {
             printf("Cannot open loadavg\n");
-            return 1;
+            return NULL;
         }
 
-        if (fscanf(file, "%f %f %f", &load1, &load5, &load15) != 3) {
-            printf("Cannot read CPU load\n");
+        if (fscanf(file, "%lf %lf %lf",
+                   &load1, &load5, &load15) != 3) {
             fclose(file);
-            return 1;
+            return NULL;
         }
 
         fclose(file);
 
-        // Save CPU values
-        output = fopen("/tmp/sysmon/cpu.tmp", "w");
+        // Update shared memory
+        pthread_mutex_lock(&state->lock);
 
-        if (output == NULL) {
-            printf("Cannot open cpu.dat\n");
-            return 1;
+        state->load1 = load1;
+        state->load5 = load5;
+        state->load15 = load15;
+
+        // Check CPU load
+        if (load1 > 1.50) {
+            state->alert_pending = 1;
+            pthread_cond_signal(&state->alert_cond);
         }
 
-        fprintf(output, "Load 1 min: %.2f\n", load1);
-        fprintf(output, "Load 5 min: %.2f\n", load5);
-        fprintf(output, "Load 15 min: %.2f\n", load15);
+        pthread_mutex_unlock(&state->lock);
 
-        fclose(output);
-	rename("/tmp/sysmon/cpu.tmp", "/tmp/sysmon/cpu.dat");
         sleep(2);
     }
 
-    return 0;
+    return NULL;
 }

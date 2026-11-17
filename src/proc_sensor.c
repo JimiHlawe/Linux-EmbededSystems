@@ -1,18 +1,19 @@
 #include <stdio.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <sysmon.h>
 
-int main()
+void *proc_sensor_thread(void *arg)
 {
+    SystemState *state = (SystemState *)arg;
+
     DIR *dir;
     struct dirent *entry;
-    FILE *output;
-
     int count;
     int i;
     int is_pid;
 
-    while (1) {
+    while (running) {
 
         count = 0;
 
@@ -21,10 +22,10 @@ int main()
 
         if (dir == NULL) {
             printf("Cannot open /proc\n");
-            return 1;
+            return NULL;
         }
 
-        // Check directory names
+        // Count processes
         while ((entry = readdir(dir)) != NULL) {
 
             is_pid = 1;
@@ -46,21 +47,15 @@ int main()
 
         closedir(dir);
 
-        // Save process count
-        output = fopen("/tmp/sysmon/proc.tmp", "w");
+        // Update shared memory
+        pthread_mutex_lock(&state->lock);
 
-        if (output == NULL) {
-            printf("Cannot open proc.dat\n");
-            return 1;
-        }
+        state->total_procs = count;
 
-        fprintf(output, "Total processes: %d\n", count);
+        pthread_mutex_unlock(&state->lock);
 
-        fclose(output);
-	rename("/tmp/sysmon/proc.tmp", "/tmp/sysmon/proc.dat");
         sleep(2);
     }
 
-    return 0;
+    return NULL;
 }
-
