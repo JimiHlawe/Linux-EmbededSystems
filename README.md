@@ -1,38 +1,25 @@
-# Sysmon - Phase 1
 
-This is a simple Linux system monitor written in C.
+# Sysmon - Phase 2
 
-It has three sensors:
-- `mem_sensor` - reads memory information.
-- `cpu_sensor` - reads CPU load.
-- `proc_sensor` - counts processes.
+This phase uses threads instead of separate processes.
 
-Each sensor reads data from `/proc` and saves it in `/tmp/sysmon`. The `sysmond` program reads these files and prints a report every 2 seconds.
+The three sensor threads read memory, CPU load and process information from /proc.
 
-## How to Run
+The data is saved in a shared struct instead of files.
 
-First, create the needed folders:
-
-```bash
-mkdir -p bin /tmp/sysmon
-```
-
-Then run:
-
-```bash
-make run
-```
-
-Press **Ctrl+C** to stop everything.
+I used a mutex to protect shared data and a condition variable for CPU load alerts above 1.50.
 
 ## Makefile
 
-- `make` - compiles all four programs.
-- `make run` - compiles if needed and starts everything using `run.sh`.
-- `make clean` - removes the compiled programs.
+- `make` - compiles the program.
+- `make run` - runs sysmond.
+- `make clean` - removes compiled files.
 
-## What I Added
+Press Ctrl+C to stop the program.
 
-I added `run.sh` to start and stop all processes together instead of doing it manually.
+## Changes from Phase 1
 
-I also used temporary files before updating the `.dat` files, so `sysmond` won't read them while they are being written.
+- One process with five threads.
+- Shared memory instead of .dat files.
+- Mutex to protect shared data.
+- Alert thread for high CPU load.
