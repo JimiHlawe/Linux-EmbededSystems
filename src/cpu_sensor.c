@@ -1,49 +1,55 @@
+
 #include <stdio.h>
 #include <unistd.h>
-#include <sysmon.h>
+#include <fcntl.h>
+#include <sysmon_ipc.h>
 
-void *cpu_sensor_thread(void *arg)
+int main()
 {
-    SystemState *state = (SystemState *)arg;
-
     FILE *file;
-    double load1, load5, load15;
+    CpuData cpu_data;
+    int fifo_fd;
 
-    while (running) {
+    // Open FIFO for writing
+    fifo_fd = open(CPU_FIFO_PATH, O_WRONLY);
+
+    if (fifo_fd == -1) {
+        perror("open FIFO");
+        return 1;
+    }
+
+    while (1) {
 
         // Read CPU load
         file = fopen("/proc/loadavg", "r");
 
         if (file == NULL) {
-            printf("Cannot open loadavg\n");
-            return NULL;
+            perror("loadavg");
+            close(fifo_fd);
+            return 1;
         }
 
         if (fscanf(file, "%lf %lf %lf",
-                   &load1, &load5, &load15) != 3) {
+                   &cpu_data.load1,
+                   &cpu_data.load5,
+                   &cpu_data.load15) != 3) {
+            printf("Cannot read CPU load\n");
             fclose(file);
-            return NULL;
+            close(fifo_fd);
+            return 1;
         }
 
         fclose(file);
 
-        // Update shared memory
-        pthread_mutex_lock(&state->lock);
-
-        state->load1 = load1;
-        state->load5 = load5;
-        state->load15 = load15;
-
-        // Check CPU load
-        if (load1 > 1.50) {
-            state->alert_pending = 1;
-            pthread_cond_signal(&state->alert_cond);
+        // Send data to parent
+        if (write(fifo_fd, &cpu_data, sizeof(cpu_data)) != sizeof(cpu_data)) {
+            printf("Cannot write CPU data\n");
+            close(fifo_fd);
+            return 1;
         }
 
-        pthread_mutex_unlock(&state->lock);
-
-        sleep(2);
+        sleep(1);
     }
 
-    return NULL;
+    return 0;
 }

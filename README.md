@@ -1,25 +1,26 @@
+# Sysmon - Phase 3
 
-# Sysmon - Phase 2
+This phase uses separate processes and pipes instead of threads.
 
-This phase uses threads instead of separate processes.
+Sysmond starts three sensor processes using fork() and execve().
 
-The three sensor threads read memory, CPU load and process information from /proc.
+- mem_sensor - sends memory data using a pipe.
+- cpu_sensor - sends CPU load using a FIFO.
+- proc_sensor - sends process count using a FIFO.
 
-The data is saved in a shared struct instead of files.
-
-I used a mutex to protect shared data and a condition variable for CPU load alerts above 1.50.
+Each sensor sends data every second, and sysmond reads and displays it.
 
 ## Makefile
 
-- `make` - compiles the program.
-- `make run` - runs sysmond.
-- `make clean` - removes compiled files.
+- `make` - compiles all four programs.
+- `make run` - starts sysmond and the sensors.
+- `make clean` - removes compiled programs.
 
-Press Ctrl+C to stop the program.
+Press Ctrl+C to stop everything.
 
-## Changes from Phase 1
+## Changes from Phase 2
 
-- One process with five threads.
-- Shared memory instead of .dat files.
-- Mutex to protect shared data.
-- Alert thread for high CPU load.
+- Separate processes instead of threads.
+- Pipes and FIFOs instead of shared memory.
+- Sysmond starts and stops the sensors automatically.
+- No mutex or condition variables.

@@ -1,28 +1,38 @@
+
 #include <stdio.h>
 #include <dirent.h>
 #include <unistd.h>
-#include <sysmon.h>
+#include <fcntl.h>
+#include <sysmon_ipc.h>
 
-void *proc_sensor_thread(void *arg)
+int main()
 {
-    SystemState *state = (SystemState *)arg;
-
     DIR *dir;
     struct dirent *entry;
-    int count;
-    int i;
+    ProcData process_data;
+    int fifo_fd;
     int is_pid;
+    int i;
 
-    while (running) {
+    // Open FIFO for writing
+    fifo_fd = open(PROC_FIFO_PATH, O_WRONLY);
 
-        count = 0;
+    if (fifo_fd == -1) {
+        perror("open FIFO");
+        return 1;
+    }
+
+    while (1) {
+
+        process_data.total_procs = 0;
 
         // Open proc directory
         dir = opendir("/proc");
 
         if (dir == NULL) {
-            printf("Cannot open /proc\n");
-            return NULL;
+            perror("opendir");
+            close(fifo_fd);
+            return 1;
         }
 
         // Count processes
@@ -41,21 +51,21 @@ void *proc_sensor_thread(void *arg)
             }
 
             if (is_pid == 1) {
-                count++;
+                process_data.total_procs++;
             }
         }
 
         closedir(dir);
 
-        // Update shared memory
-        pthread_mutex_lock(&state->lock);
+        // Send data to parent
+        if (write(fifo_fd, &process_data, sizeof(process_data)) != sizeof(process_data)) {
+            perror("write");
+            close(fifo_fd);
+            return 1;
+        }
 
-        state->total_procs = count;
-
-        pthread_mutex_unlock(&state->lock);
-
-        sleep(2);
+        sleep(1);
     }
 
-    return NULL;
+    return 0;
 }

@@ -1,28 +1,34 @@
+
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sysmon.h>
+#include <sysmon_ipc.h>
 
-void *mem_sensor_thread(void *arg)
+int main(int argc, char *argv[])
 {
-    SystemState *state = (SystemState *)arg;
-
     FILE *file;
+    MemData memory;
     char line[256];
     char name[50];
     long value;
+    int pipe_fd = STDOUT_FILENO;
 
-    while (running) {
+    // Get pipe descriptor from parent
+    if (argc > 1) {
+        pipe_fd = atoi(argv[1]);
+    }
 
-        long total = 0, free_mem = 0, available = 0;
-        long swap_total = 0, swap_free = 0;
+    while (1) {
+
+        memory = (MemData){0};
 
         // Open memory information
         file = fopen("/proc/meminfo", "r");
 
         if (file == NULL) {
-            printf("Cannot open meminfo\n");
-            return NULL;
+            perror("meminfo");
+            return 1;
         }
 
         // Read memory values
@@ -31,37 +37,32 @@ void *mem_sensor_thread(void *arg)
             if (sscanf(line, "%49s %ld", name, &value) == 2) {
 
                 if (strcmp(name, "MemTotal:") == 0)
-                    total = value;
+                    memory.mem_total = value;
 
                 if (strcmp(name, "MemFree:") == 0)
-                    free_mem = value;
+                    memory.mem_free = value;
 
                 if (strcmp(name, "MemAvailable:") == 0)
-                    available = value;
+                    memory.mem_avail = value;
 
                 if (strcmp(name, "SwapTotal:") == 0)
-                    swap_total = value;
+                    memory.swap_total = value;
 
                 if (strcmp(name, "SwapFree:") == 0)
-                    swap_free = value;
+                    memory.swap_free = value;
             }
         }
 
         fclose(file);
 
-        // Update shared memory
-        pthread_mutex_lock(&state->lock);
+        // Send data to parent
+        if (write(pipe_fd, &memory, sizeof(memory)) != sizeof(memory)) {
+            perror("write");
+            return 1;
+        }
 
-        state->mem_total = total;
-        state->mem_free = free_mem;
-        state->mem_avail = available;
-        state->swap_total = swap_total;
-        state->swap_free = swap_free;
-
-        pthread_mutex_unlock(&state->lock);
-
-        sleep(2);
+        sleep(1);
     }
 
-    return NULL;
+    return 0;
 }
