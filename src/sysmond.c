@@ -12,31 +12,69 @@ extern char **environ;
 
 volatile sig_atomic_t running = 1;
 
+// Process IDs
+pid_t memory_pid = -1;
+pid_t cpu_pid = -1;
+pid_t process_pid = -1;
+
+// Pipe descriptors
+int memory_pipe[2] = {-1, -1};
+int cpu_fd = -1;
+int process_fd = -1;
+
 // Stop on Ctrl+C
 void stop_program(int sig)
 {
     running = 0;
 }
 
+// Stop processes and close pipes
+void cleanup()
+{
+    if (memory_pid > 0)
+        kill(memory_pid, SIGTERM);
+
+    if (cpu_pid > 0)
+        kill(cpu_pid, SIGTERM);
+
+    if (process_pid > 0)
+        kill(process_pid, SIGTERM);
+
+    if (memory_pid > 0)
+        waitpid(memory_pid, NULL, 0);
+
+    if (cpu_pid > 0)
+        waitpid(cpu_pid, NULL, 0);
+
+    if (process_pid > 0)
+        waitpid(process_pid, NULL, 0);
+
+    if (memory_pipe[0] != -1)
+        close(memory_pipe[0]);
+
+    if (memory_pipe[1] != -1)
+        close(memory_pipe[1]);
+
+    if (cpu_fd != -1)
+        close(cpu_fd);
+
+    if (process_fd != -1)
+        close(process_fd);
+
+    unlink(CPU_FIFO_PATH);
+    unlink(PROC_FIFO_PATH);
+}
+
 int main()
 {
-    int memory_pipe[2] = {-1, -1};
-    int cpu_fd = -1;
-    int process_fd = -1;
-
-    pid_t memory_pid = -1;
-    pid_t cpu_pid = -1;
-    pid_t process_pid = -1;
-
     char pipe_number[20];
+    struct pollfd pipes[3];
 
     MemData memory_data;
     CpuData cpu_data;
     ProcData process_data;
 
-    struct pollfd pipes[3];
-
-    int result = 1;
+    int result = 0;
 
     signal(SIGINT, stop_program);
     signal(SIGTERM, stop_program);
@@ -47,13 +85,15 @@ int main()
 
     if (pipe(memory_pipe) == -1) {
         perror("pipe");
-        goto cleanup;
+        cleanup();
+        return 1;
     }
 
     if (mkfifo(CPU_FIFO_PATH, 0600) == -1 ||
         mkfifo(PROC_FIFO_PATH, 0600) == -1) {
         perror("mkfifo");
-        goto cleanup;
+        cleanup();
+        return 1;
     }
 
     // Start memory sensor
@@ -61,7 +101,8 @@ int main()
 
     if (memory_pid == -1) {
         perror("fork memory");
-        goto cleanup;
+        cleanup();
+        return 1;
     }
 
     if (memory_pid == 0) {
@@ -85,7 +126,8 @@ int main()
 
     if (cpu_pid == -1) {
         perror("fork CPU");
-        goto cleanup;
+        cleanup();
+        return 1;
     }
 
     if (cpu_pid == 0) {
@@ -103,7 +145,8 @@ int main()
 
     if (process_pid == -1) {
         perror("fork process");
-        goto cleanup;
+        cleanup();
+        return 1;
     }
 
     if (process_pid == 0) {
@@ -121,14 +164,16 @@ int main()
 
     if (cpu_fd == -1) {
         perror("open CPU FIFO");
-        goto cleanup;
+        cleanup();
+        return 1;
     }
 
     process_fd = open(PROC_FIFO_PATH, O_RDONLY);
 
     if (process_fd == -1) {
         perror("open process FIFO");
-        goto cleanup;
+        cleanup();
+        return 1;
     }
 
     // Set up poll
@@ -144,11 +189,11 @@ int main()
     while (running) {
 
         if (poll(pipes, 3, -1) == -1) {
-            if (!running)
-                break;
-
-            perror("poll");
-            goto cleanup;
+            if (running) {
+                perror("poll");
+                result = 1;
+            }
+            break;
         }
 
         if (!running)
@@ -158,8 +203,10 @@ int main()
         if (pipes[0].revents & POLLIN) {
 
             if (read(pipes[0].fd, &memory_data,
-                     sizeof(memory_data)) != sizeof(memory_data))
+                     sizeof(memory_data)) != sizeof(memory_data)) {
+                result = 1;
                 break;
+            }
 
             printf("\n--- MEMORY ---\n");
             printf("MemTotal: %ld kB\n", memory_data.mem_total);
@@ -173,8 +220,10 @@ int main()
         if (pipes[1].revents & POLLIN) {
 
             if (read(pipes[1].fd, &cpu_data,
-                     sizeof(cpu_data)) != sizeof(cpu_data))
+                     sizeof(cpu_data)) != sizeof(cpu_data)) {
+                result = 1;
                 break;
+            }
 
             printf("\n--- CPU ---\n");
             printf("Load 1 min: %.2f\n", cpu_data.load1);
@@ -186,8 +235,10 @@ int main()
         if (pipes[2].revents & POLLIN) {
 
             if (read(pipes[2].fd, &process_data,
-                     sizeof(process_data)) != sizeof(process_data))
+                     sizeof(process_data)) != sizeof(process_data)) {
+                result = 1;
                 break;
+            }
 
             printf("\n--- PROCESSES ---\n");
             printf("Total processes: %d\n", process_data.total_procs);
@@ -195,6 +246,7 @@ int main()
 
         fflush(stdout);
 
+        // Check closed pipes
         if (pipes[0].revents & (POLLHUP | POLLERR | POLLNVAL))
             break;
 
@@ -205,46 +257,8 @@ int main()
             break;
     }
 
-    if (!running)
-        result = 0;
-
-cleanup:
-    // Stop children
-    if (memory_pid > 0)
-        kill(memory_pid, SIGTERM);
-
-    if (cpu_pid > 0)
-        kill(cpu_pid, SIGTERM);
-
-    if (process_pid > 0)
-        kill(process_pid, SIGTERM);
-
-    // Wait for children
-    if (memory_pid > 0)
-        waitpid(memory_pid, NULL, 0);
-
-    if (cpu_pid > 0)
-        waitpid(cpu_pid, NULL, 0);
-
-    if (process_pid > 0)
-        waitpid(process_pid, NULL, 0);
-
-    // Close pipes
-    if (memory_pipe[0] != -1)
-        close(memory_pipe[0]);
-
-    if (memory_pipe[1] != -1)
-        close(memory_pipe[1]);
-
-    if (cpu_fd != -1)
-        close(cpu_fd);
-
-    if (process_fd != -1)
-        close(process_fd);
-
-    // Remove FIFOs
-    unlink(CPU_FIFO_PATH);
-    unlink(PROC_FIFO_PATH);
+    // Clean up before exit
+    cleanup();
 
     return result;
 }

@@ -1,26 +1,24 @@
-# Sysmon - Phase 3
+# Sysmon - Phase 3 (No Pthreads)
 
-This phase uses separate processes and pipes instead of threads.
+This version handles different sensor intervals without using threads.
 
-Sysmond starts three sensor processes using fork() and execve().
+- mem_sensor - updates every 1 second.
+- cpu_sensor - updates every 3 seconds.
+- proc_sensor - updates every 5 seconds.
 
-- mem_sensor - sends memory data using a pipe.
-- cpu_sensor - sends CPU load using a FIFO.
-- proc_sensor - sends process count using a FIFO.
-
-Each sensor sends data every second, and sysmond reads and displays it.
+Sysmond uses poll() to read and print new data when it arrives, without waiting for the slowest sensor.
 
 ## Makefile
 
-- `make` - compiles all four programs.
+- `make` - compiles all programs.
 - `make run` - starts sysmond and the sensors.
 - `make clean` - removes compiled programs.
 
 Press Ctrl+C to stop everything.
 
-## Changes from Phase 2
+## Changes
 
-- Separate processes instead of threads.
-- Pipes and FIFOs instead of shared memory.
-- Sysmond starts and stops the sensors automatically.
-- No mutex or condition variables.
+- Removed pthreads and mutex.
+- Used poll() instead of reader threads.
+- Kept pipes and FIFOs for communication.
+- Added a cleanup() function instead of goto.
