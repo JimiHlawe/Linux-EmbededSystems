@@ -15,7 +15,7 @@ bin/proc_sensor: src/proc_sensor.c inc/sysmon_ipc.h
 	$(CC) $(CFLAGS) src/proc_sensor.c -o bin/proc_sensor
 
 bin/sysmond: src/sysmond.c inc/sysmon_ipc.h
-	$(CC) $(CFLAGS) src/sysmond.c -o bin/sysmond
+	$(CC) $(CFLAGS) -pthread src/sysmond.c -o bin/sysmond
 
 run: all
 	./bin/sysmond

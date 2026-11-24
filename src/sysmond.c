@@ -5,16 +5,90 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <pthread.h>
 #include <sysmon_ipc.h>
 
 extern char **environ;
 
 volatile sig_atomic_t running = 1;
+pthread_mutex_t print_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // Stop on Ctrl+C
 void stop_program(int sig)
 {
     running = 0;
+}
+
+// Read memory data
+void *read_memory(void *arg)
+{
+    int fd = *(int *)arg;
+    MemData data;
+
+    while (running) {
+        if (read(fd, &data, sizeof(data)) != sizeof(data))
+            break;
+
+        pthread_mutex_lock(&print_lock);
+
+        printf("\n--- MEMORY ---\n");
+        printf("MemTotal: %ld kB\n", data.mem_total);
+        printf("MemFree: %ld kB\n", data.mem_free);
+        printf("MemAvailable: %ld kB\n", data.mem_avail);
+        printf("SwapTotal: %ld kB\n", data.swap_total);
+        printf("SwapFree: %ld kB\n", data.swap_free);
+
+        fflush(stdout);
+        pthread_mutex_unlock(&print_lock);
+    }
+
+    return NULL;
+}
+
+// Read CPU data
+void *read_cpu(void *arg)
+{
+    int fd = *(int *)arg;
+    CpuData data;
+
+    while (running) {
+        if (read(fd, &data, sizeof(data)) != sizeof(data))
+            break;
+
+        pthread_mutex_lock(&print_lock);
+
+        printf("\n--- CPU ---\n");
+        printf("Load 1 min: %.2f\n", data.load1);
+        printf("Load 5 min: %.2f\n", data.load5);
+        printf("Load 15 min: %.2f\n", data.load15);
+
+        fflush(stdout);
+        pthread_mutex_unlock(&print_lock);
+    }
+
+    return NULL;
+}
+
+// Read process count
+void *read_processes(void *arg)
+{
+    int fd = *(int *)arg;
+    ProcData data;
+
+    while (running) {
+        if (read(fd, &data, sizeof(data)) != sizeof(data))
+            break;
+
+        pthread_mutex_lock(&print_lock);
+
+        printf("\n--- PROCESSES ---\n");
+        printf("Total processes: %d\n", data.total_procs);
+
+        fflush(stdout);
+        pthread_mutex_unlock(&print_lock);
+    }
+
+    return NULL;
 }
 
 int main()
@@ -27,12 +101,10 @@ int main()
     pid_t cpu_pid = -1;
     pid_t process_pid = -1;
 
+    pthread_t memory_thread, cpu_thread, process_thread;
+    int memory_started = 0, cpu_started = 0, process_started = 0;
+
     char pipe_number[20];
-
-    MemData memory_data;
-    CpuData cpu_data;
-    ProcData process_data;
-
     int exit_status = 1;
 
     signal(SIGINT, stop_program);
@@ -68,9 +140,7 @@ int main()
     if (memory_pid == 0) {
         close(memory_pipe[0]);
 
-        snprintf(pipe_number, sizeof(pipe_number),
-                 "%d", memory_pipe[1]);
-
+        snprintf(pipe_number, sizeof(pipe_number), "%d", memory_pipe[1]);
         char *args[] = {"./bin/mem_sensor", pipe_number, NULL};
 
         execve(args[0], args, environ);
@@ -91,7 +161,6 @@ int main()
 
     if (cpu_pid == 0) {
         close(memory_pipe[0]);
-
         char *args[] = {"./bin/cpu_sensor", NULL};
 
         execve(args[0], args, environ);
@@ -103,21 +172,20 @@ int main()
     process_pid = fork();
 
     if (process_pid == -1) {
-        perror("fork processes");
+        perror("fork process");
         goto cleanup;
     }
 
     if (process_pid == 0) {
         close(memory_pipe[0]);
-
         char *args[] = {"./bin/proc_sensor", NULL};
 
         execve(args[0], args, environ);
-        perror("execve processes");
+        perror("execve process");
         _exit(1);
     }
 
-    // Open FIFOs for reading
+    // Open FIFOs
     cpu_fd = open(CPU_FIFO_PATH, O_RDONLY);
 
     if (cpu_fd == -1) {
@@ -132,47 +200,30 @@ int main()
         goto cleanup;
     }
 
-    // Read and print data
-    while (running) {
-
-        if (read(memory_pipe[0], &memory_data,
-                 sizeof(memory_data)) != sizeof(memory_data))
-            break;
-
-        if (read(cpu_fd, &cpu_data,
-                 sizeof(cpu_data)) != sizeof(cpu_data))
-            break;
-
-        if (read(process_fd, &process_data,
-                 sizeof(process_data)) != sizeof(process_data))
-            break;
-
-        if (!running)
-            break;
-
-        printf("\n===== SYSTEM MONITOR =====\n");
-
-        printf("\n--- MEMORY ---\n");
-        printf("MemTotal: %ld kB\n", memory_data.mem_total);
-        printf("MemFree: %ld kB\n", memory_data.mem_free);
-        printf("MemAvailable: %ld kB\n", memory_data.mem_avail);
-        printf("SwapTotal: %ld kB\n", memory_data.swap_total);
-        printf("SwapFree: %ld kB\n", memory_data.swap_free);
-
-        printf("\n--- CPU ---\n");
-        printf("Load 1 min: %.2f\n", cpu_data.load1);
-        printf("Load 5 min: %.2f\n", cpu_data.load5);
-        printf("Load 15 min: %.2f\n", cpu_data.load15);
-
-        printf("\n--- PROCESSES ---\n");
-        printf("Total processes: %d\n", process_data.total_procs);
-
-        printf("\n==========================\n");
-        fflush(stdout);
+    // Start reader threads
+    if (pthread_create(&memory_thread, NULL, read_memory, &memory_pipe[0]) != 0) {
+        printf("Cannot start memory thread\n");
+        goto cleanup;
     }
+    memory_started = 1;
 
-    if (!running)
-        exit_status = 0;
+    if (pthread_create(&cpu_thread, NULL, read_cpu, &cpu_fd) != 0) {
+        printf("Cannot start CPU thread\n");
+        goto cleanup;
+    }
+    cpu_started = 1;
+
+    if (pthread_create(&process_thread, NULL, read_processes, &process_fd) != 0) {
+        printf("Cannot start process thread\n");
+        goto cleanup;
+    }
+    process_started = 1;
+
+    // Wait until Ctrl+C
+    while (running)
+        sleep(1);
+
+    exit_status = 0;
 
 cleanup:
     // Stop children
@@ -195,6 +246,16 @@ cleanup:
     if (process_pid > 0)
         waitpid(process_pid, NULL, 0);
 
+    // Wait for reader threads
+    if (memory_started)
+        pthread_join(memory_thread, NULL);
+
+    if (cpu_started)
+        pthread_join(cpu_thread, NULL);
+
+    if (process_started)
+        pthread_join(process_thread, NULL);
+
     // Close pipes
     if (memory_pipe[0] != -1)
         close(memory_pipe[0]);
@@ -208,9 +269,11 @@ cleanup:
     if (process_fd != -1)
         close(process_fd);
 
-    // Remove FIFO files
+    // Remove FIFOs
     unlink(CPU_FIFO_PATH);
     unlink(PROC_FIFO_PATH);
+
+    pthread_mutex_destroy(&print_lock);
 
     return exit_status;
 }

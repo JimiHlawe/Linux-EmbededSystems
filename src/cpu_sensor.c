@@ -14,7 +14,7 @@ int main()
     fifo_fd = open(CPU_FIFO_PATH, O_WRONLY);
 
     if (fifo_fd == -1) {
-        perror("open FIFO");
+        perror("open CPU FIFO");
         return 1;
     }
 
@@ -30,9 +30,7 @@ int main()
         }
 
         if (fscanf(file, "%lf %lf %lf",
-                   &cpu_data.load1,
-                   &cpu_data.load5,
-                   &cpu_data.load15) != 3) {
+                   &cpu_data.load1, &cpu_data.load5, &cpu_data.load15) != 3) {
             printf("Cannot read CPU load\n");
             fclose(file);
             close(fifo_fd);
@@ -43,12 +41,12 @@ int main()
 
         // Send data to parent
         if (write(fifo_fd, &cpu_data, sizeof(cpu_data)) != sizeof(cpu_data)) {
-            printf("Cannot write CPU data\n");
+            perror("write CPU");
             close(fifo_fd);
             return 1;
         }
 
-        sleep(1);
+        sleep(3);
     }
 
     return 0;
